@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Study Calendar</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f6f5f1;--card:#fff;--tx:#1d1d1f;--mu:#777;--bd:#e3e1da;--ac:#3b5bdb;--ex:#e03131;--hw:#2f9e44}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17181b;--card:#222428;--tx:#eee;--mu:#999;--bd:#34363c;--ac:#748ffc;--ex:#ff6b6b;--hw:#51cf66}}
+:root[data-theme="dark"]{--bg:#17181b;--card:#222428;--tx:#eee;--mu:#999;--bd:#34363c;--ac:#748ffc;--ex:#ff6b6b;--hw:#51cf66}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:900px;margin:auto;padding:16px}
+h1{font-size:20px;margin:0}header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button,select,input,textarea{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:7px 10px}
+button{cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}button.d{color:var(--ex)}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.dow{font-size:12px;color:var(--mu);text-align:center}
+.day{min-height:68px;border:1px solid var(--bd);border-radius:8px;padding:3px;cursor:pointer;overflow:hidden;background:var(--bg)}
+.day.o{opacity:.4}.day.t{border-color:var(--ac)}.day.s{outline:2px solid var(--ac)}
+.day b{font-size:12px}.chip{display:block;font-size:10px;padding:1px 4px;margin-top:2px;border-radius:4px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip.exam{background:var(--ex)}.chip.homework{background:var(--hw)}
+.ev{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--bd)}
+.tag{font-size:11px;padding:1px 6px;border-radius:99px;border:1px solid var(--bd);color:var(--mu)}
+.mu{color:var(--mu)}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+.modal .card{width:100%;max-width:420px;max-height:90vh;overflow:auto}
+label{display:block;font-size:13px;color:var(--mu);margin:8px 0 3px}.modal input,.modal select,.modal textarea{width:100%}
+.subs{display:flex;flex-wrap:wrap;gap:6px}.subs label{margin:0;display:flex;gap:4px;align-items:center;color:var(--tx);border:1px solid var(--bd);border-radius:99px;padding:4px 10px;font-size:13px}
+.subs input{width:auto}.hide{display:none}
+@media(max-width:560px){.day{min-height:52px}.chip{font-size:9px}}
+</style></head><body><main>
+<header><h1>📅 Study Calendar</h1><div class="mu" id="who"></div></header>
+<div id="msg" class="card hide" style="margin-bottom:10px"></div>
+<div id="auth" class="hide"></div>
+<div id="app" class="hide">
+<div class="bar">
+<button id="prev">‹</button><strong id="mon" style="min-width:130px;text-align:center"></strong><button id="next">›</button>
+<button id="today">Today</button>
+<select id="view"><option value="mine">My subjects</option><option value="all">Everyone (all)</option></select>
+<button id="prof">⚙ My subjects</button><button class="p" id="add">+ Add</button>
+</div>
+<div class="card"><div class="grid" id="cal"></div></div>
+<div class="card" style="margin-top:10px"><strong id="dl"></strong><div id="list"></div></div>
+</div>
+<div id="modal"></div>
+</main>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// ====== PASTE YOUR FIREBASE CONFIG HERE (replace the whole block) ======
+const firebaseConfig={
+  apiKey:"AIzaSyBuYON1xYdZekcnj_DXJHN8egWp8Yg_FQ8",
+  authDomain:"schedule-share-ccbca.firebaseapp.com",
+  projectId:"schedule-share-ccbca",
+  storageBucket:"schedule-share-ccbca.firebasestorage.app",
+  messagingSenderId:"536611001045",
+  appId:"1:536611001045:web:fa67880aafb14cccb0485c"
+};
+// ========================================================================
+const SUBJECTS=["Sociology","Math","Further Math","Economy","Business","Computer Science","Media Study","Psychology","Chemistry","Biology","English","History"];
+const YEARS=["Year 12","Year 13"];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+let db=null,auth=null,account=null,profile=null,events=[],cur=new Date(),sel=iso(new Date()),unsub=null,registering=false;
+cur.setDate(1);
+
+function msg(t){const m=$("msg");m.textContent=t;m.classList.toggle("hide",!t)}
+
+
+const accId=n=>n.trim().toLowerCase().replace(/ +/g,"_");
+const toEmail=n=>accId(n)+"@studycalendar.app";
+
+function init(){
+  if(firebaseConfig.apiKey==="PASTE_HERE"){msg("Setup needed: open index.html and paste your Firebase config at the top of the script.");return}
+  try{
+    firebase.initializeApp(firebaseConfig);auth=firebase.auth();db=firebase.firestore();
+    auth.onAuthStateChanged(async u=>{
+      if(registering)return;
+      if(!u){showAuth("login");return}
+      try{const sn=await db.collection("users").doc(u.uid).get();
+        if(sn.exists)enter(sn.data(),u.uid);else{await auth.signOut()}}
+      catch(e){msg("Could not load your account: "+(e.message||e.code))}});
+  }catch(e){msg("Something went wrong: "+(e.message||e))}
+}
+
+function showAuth(mode){
+  $("app").classList.add("hide");$("who").innerHTML="";
+  const reg=mode==="register";
+  $("auth").classList.remove("hide");
+  $("auth").innerHTML=`<div class="card" style="max-width:440px;margin:20px auto">
+  <div class="bar"><button class="${reg?"":"p"}" id="tl">Log in</button><button class="${reg?"p":""}" id="tr">Register</button></div>
+  <label>Name (this is your ID)</label><input id="an" autocomplete="username" maxlength="20" style="width:100%">
+  <label>Password</label><input id="ap" type="password" autocomplete="${reg?"new-password":"current-password"}" style="width:100%">
+  ${reg?`<label>Confirm password</label><input id="ap2" type="password" style="width:100%">
+  <label>Year</label><select id="py" style="width:100%">${YEARS.map(y=>`<option>${y}</option>`).join("")}</select>
+  <label>Subjects</label><div class="subs">${SUBJECTS.map(x=>`<label><input type="checkbox" value="${x}">${x}</label>`).join("")}</div>`:""}
+  <p id="ae" style="color:var(--ex);margin:8px 0 0"></p>
+  <button class="p" id="go" style="width:100%;margin-top:10px">${reg?"Create account":"Log in"}</button></div>`;
+  $("tl").onclick=()=>showAuth("login");$("tr").onclick=()=>showAuth("register");
+  const err=t=>$("ae").textContent=t;
+  $("go").onclick=async()=>{
+    const name=$("an").value.trim(),pw=$("ap").value;
+    if(!/^[A-Za-z0-9 ]{2,20}$/.test(name))return err("Name: 2-20 letters, numbers or spaces.");
+    if(pw.length<6)return err("Password must be at least 6 characters.");
+    $("go").disabled=true;
+    try{
+      if(reg){
+        if(pw!==$("ap2").value)return err("Passwords don't match.");
+        const subjects=[...document.querySelectorAll(".subs input:checked")].map(c=>c.value);
+        if(!subjects.length)return err("Pick at least one subject.");
+        registering=true;
+        const cr=await auth.createUserWithEmailAndPassword(toEmail(name),pw);
+        const a={name,year:$("py").value,subjects};
+        await db.collection("users").doc(cr.user.uid).set(a);
+        registering=false;enter(a,cr.user.uid);
+      }else{
+        await auth.signInWithEmailAndPassword(toEmail(name),pw);
+      }
+    }catch(e){
+      registering=false;
+      const c=e.code||"";
+      err(c==="auth/email-already-in-use"?"That name is already taken."
+        :(c==="auth/invalid-credential"||c==="auth/wrong-password"||c==="auth/user-not-found"||c==="auth/invalid-login-credentials")?"Wrong name or password."
+        :"Error: "+(e.message||c));
+    }finally{$("go").disabled=false}};
+}
+
+function enter(a,uid){
+  account={...a,uid};profile={year:a.year,subjects:a.subjects||[]};
+  $("auth").classList.add("hide");$("app").classList.remove("hide");
+  $("who").innerHTML=`<strong>${esc(a.name)}</strong> · ${esc(a.year)} <button id="lo">Log out</button>`;
+  $("lo").onclick=async()=>{if(unsub)unsub();unsub=null;account=null;profile=null;events=[];await auth.signOut()};
+  if(unsub)unsub();
+  unsub=db.collection("events").onSnapshot(q=>{events=q.docs.map(d=>({id:d.id,...d.data()}));render()},e=>msg("Could not load events: "+e.message));
+  render();
+}
+
+const visible=()=>events.filter(e=>{
+  if($("view").value==="all"||!profile)return true;
+  return e.year===profile.year&&(e.subject==="All"||(profile.subjects||[]).includes(e.subject))});
+
+function render(){
+  const y=cur.getFullYear(),m=cur.getMonth();
+  $("mon").textContent=cur.toLocaleString("en-GB",{month:"long",year:"numeric"});
+  const ev=visible(),first=(new Date(y,m,1).getDay()+6)%7,n=new Date(y,m+1,0).getDate();
+  let h=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="dow">${d}</div>`).join("");
+  for(let i=0;i<Math.ceil((first+n)/7)*7;i++){
+    const d=new Date(y,m,1-first+i),k=iso(d),de=ev.filter(e=>e.date===k);
+    h+=`<div class="day ${d.getMonth()!==m?"o":""} ${k===iso(new Date())?"t":""} ${k===sel?"s":""}" data-d="${k}"><b>${d.getDate()}</b>${de.slice(0,3).map(e=>`<span class="chip ${esc(e.type)}">${esc(e.subject)}</span>`).join("")}${de.length>3?`<span class="mu" style="font-size:10px">+${de.length-3}</span>`:""}</div>`}
+  $("cal").innerHTML=h;
+  $("cal").querySelectorAll(".day").forEach(el=>el.onclick=()=>{sel=el.dataset.d;render()});
+  $("dl").textContent=new Date(sel+"T00:00").toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"});
+  const de=ev.filter(e=>e.date===sel).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  $("list").innerHTML=de.length?de.map(e=>`<div class="ev"><div><span class="tag">${e.type==="exam"?"📝 Exam":"📚 Homework"}</span> <strong>${esc(e.subject)}</strong> · ${esc(e.year)}<br>${esc(e.title)} ${e.time?`<span class="mu">· ${esc(e.time)}</span>`:""}${e.notes?`<div class="mu">${esc(e.notes)}</div>`:""}<div class="mu" style="font-size:12px">added by ${esc(e.by||"a friend")}</div></div><div><button data-e="${e.id}">Edit</button></div></div>`).join(""):`<p class="mu">Nothing on this day.</p>`;
+  $("list").querySelectorAll("button[data-e]").forEach(b=>b.onclick=()=>openEvent(events.find(e=>e.id===b.dataset.e)));
+}
+
+function openProfile(){
+  const p=profile;
+  $("modal").innerHTML=`<div class="modal"><div class="card"><h3 style="margin:0 0 4px">Your year & subjects</h3>
+  <label>Year</label><select id="py">${YEARS.map(y=>`<option ${y===p.year?"selected":""}>${y}</option>`).join("")}</select>
+  <label>Subjects</label><div class="subs">${SUBJECTS.map(s=>`<label><input type="checkbox" value="${s}" ${p.subjects.includes(s)?"checked":""}>${s}</label>`).join("")}</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button id="x">Cancel</button><button class="p" id="ok">Save</button></div></div></div>`;
+  $("x").onclick=()=>$("modal").innerHTML="";
+  $("ok").onclick=async()=>{
+    profile={year:$("py").value,subjects:[...document.querySelectorAll(".subs input:checked")].map(c=>c.value)};
+    try{await db.collection("users").doc(account.uid).update(profile)}catch(e){msg("Couldn't save: "+(e.message||e.code))}
+    $("modal").innerHTML="";render()};
+}
+
+function openEvent(e){
+  const n=!e;e=e||{type:"exam",subject:(profile?.subjects||[])[0]||SUBJECTS[0],year:profile?.year||YEARS[0],date:sel,title:"",time:"",notes:""};
+  const subs=["All",...SUBJECTS];
+  $("modal").innerHTML=`<div class="modal"><div class="card"><h3 style="margin:0">${n?"Add":"Edit"} item</h3>
+  <label>Type</label><select id="et"><option value="exam" ${e.type==="exam"?"selected":""}>Exam</option><option value="homework" ${e.type==="homework"?"selected":""}>Homework</option></select>
+  <label>Subject</label><select id="es">${subs.map(s=>`<option ${s===e.subject?"selected":""}>${s}</option>`).join("")}</select>
+  <label>Year</label><select id="ey">${YEARS.map(y=>`<option ${y===e.year?"selected":""}>${y}</option>`).join("")}</select>
+  <label>Title</label><input id="ti" value="${esc(e.title)}" placeholder="e.g. Paper 1 / Essay on WW1">
+  <label>Date</label><input id="ed" type="date" value="${esc(e.date)}">
+  <label>Time (optional)</label><input id="tm" type="time" value="${esc(e.time)}">
+  <label>Notes</label><textarea id="no" rows="2">${esc(e.notes)}</textarea>
+  <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px"><div>${n?"":`<button class="d" id="del">Delete</button>`}</div><div style="display:flex;gap:8px"><button id="x">Cancel</button><button class="p" id="ok">Save</button></div></div></div></div>`;
+  $("x").onclick=()=>$("modal").innerHTML="";
+  if(!n)$("del").onclick=async()=>{if(confirm("Delete this item for everyone?")){try{await db.collection("events").doc(e.id).delete()}catch(er){msg("Delete failed: "+(er.message||er.code))}$("modal").innerHTML=""}};
+  $("ok").onclick=async()=>{
+    if(!$("ti").value.trim()||!$("ed").value){alert("Please add a title and date.");return}
+    const id=n?"e"+Date.now().toString(36)+Math.random().toString(36).slice(2,6):e.id;
+    const data={type:$("et").value,subject:$("es").value,year:$("ey").value,title:$("ti").value.trim(),date:$("ed").value,time:$("tm").value,notes:$("no").value.trim(),by:n?account.name:(e.by||account.name)};
+    try{await db.collection("events").doc(id).set(data)}catch(er){msg("Save failed: "+(er.message||er.code))}
+    sel=data.date;const d=new Date(data.date+"T00:00");cur=new Date(d.getFullYear(),d.getMonth(),1);
+    $("modal").innerHTML="";render()};
+}
+
+$("prev").onclick=()=>{cur=new Date(cur.getFullYear(),cur.getMonth()-1,1);render()};
+$("next").onclick=()=>{cur=new Date(cur.getFullYear(),cur.getMonth()+1,1);render()};
+$("today").onclick=()=>{cur=new Date();cur.setDate(1);sel=iso(new Date());render()};
+$("view").onchange=render;$("prof").onclick=openProfile;$("add").onclick=()=>openEvent();
+init();
+</script></body></html>
